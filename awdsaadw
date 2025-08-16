@@ -1,0 +1,301 @@
+local Players = game:GetService("Players")
+local Workspace = game:GetService("Workspace")
+local TweenService = game:GetService("TweenService")
+local HttpService = game:GetService("HttpService")
+local TeleportService = game:GetService("TeleportService")
+local Debris = game:GetService("Debris")
+
+local LocalPlayer = Players.LocalPlayer
+local PlaceId = game.PlaceId
+local settingsFile = "brainrot_settings.json"
+
+local settings = {
+    Ping = true,
+    Scripts = true
+}
+
+local function loadSettings()
+    if isfile(settingsFile) then
+        local success, result = pcall(HttpService.JSONDecode, HttpService, readfile(settingsFile))
+        if success then settings = result end
+    else
+        writefile(settingsFile, HttpService:JSONEncode(settings))
+    end
+end
+
+local function saveSettings()
+    writefile(settingsFile, HttpService:JSONEncode(settings))
+end
+
+loadSettings()
+
+local running = true
+local foundBrainrots = {}
+local countedObjects = {}
+local espDrawings = {}
+local superSpeedAndFlyLoaded = false
+local triedServers = {}
+local serversTried = 0
+local brainrotNames = _G.TargetBrainrots or {}
+
+local function matchesBrainrot(name)
+    for _, br in ipairs(brainrotNames) do
+        if name == br then return br end
+    end
+    return nil
+end
+
+local ScreenGui = Instance.new("ScreenGui", LocalPlayer:WaitForChild("PlayerGui"))
+local frame = Instance.new("Frame", ScreenGui)
+frame.Size = UDim2.new(0, 403, 0, 415)
+frame.Position = UDim2.new(0.429, 0, 0.276, 0)
+frame.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+frame.Active = true
+frame.Draggable = true
+Instance.new("UICorner", frame).CornerRadius = UDim.new(0, 10)
+
+local Logger = Instance.new("ScrollingFrame", frame)
+Logger.Size = UDim2.new(0, 403, 0, 305)
+Logger.Position = UDim2.new(0, 0, 0.135, 0)
+Logger.BackgroundTransparency = 1
+Logger.ScrollBarThickness = 9
+Logger.AutomaticCanvasSize = Enum.AutomaticSize.Y
+
+local listLayout = Instance.new("UIListLayout", Logger)
+listLayout.SortOrder = Enum.SortOrder.LayoutOrder
+listLayout.Padding = UDim.new(0, 5)
+listLayout.HorizontalAlignment = Enum.HorizontalAlignment.Center
+
+local scanningLabel = Instance.new("TextLabel", frame)
+scanningLabel.Size = UDim2.new(0, 403, 0, 50)
+scanningLabel.Position = UDim2.new(0, 0, 0.87, 0)
+scanningLabel.BackgroundTransparency = 1
+scanningLabel.Font = Enum.Font.FredokaOne
+scanningLabel.Text = ""
+scanningLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+scanningLabel.TextSize = 14
+
+local FoundAmount = Instance.new("TextLabel", frame)
+FoundAmount.Size = UDim2.new(0, 403, 0, 50)
+FoundAmount.Font = Enum.Font.FredokaOne
+FoundAmount.TextColor3 = Color3.fromRGB(255, 255, 255)
+FoundAmount.TextSize = 30
+FoundAmount.BackgroundTransparency = 1
+FoundAmount.Text = "Found: 0"
+
+local SettingsOpenButton = Instance.new("ImageButton", frame)
+SettingsOpenButton.Size = UDim2.new(0, 50, 0, 50)
+SettingsOpenButton.Position = UDim2.new(1.038, 0, 0, 0)
+SettingsOpenButton.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+SettingsOpenButton.Image = "rbxassetid://100665044102453"
+Instance.new("UICorner", SettingsOpenButton).CornerRadius = UDim.new(0, 10)
+
+local SettingsGUI = Instance.new("Frame", frame)
+SettingsGUI.Size = UDim2.new(0, 190, 0, 240)
+SettingsGUI.Position = UDim2.new(12.0, 0, 0, 0)
+SettingsGUI.BackgroundColor3 = Color3.fromRGB(10, 10, 10)
+Instance.new("UICorner", SettingsGUI).CornerRadius = UDim.new(0, 10)
+
+local function createToggle(parent, labelText, defaultState, yPosition, settingName)
+    local Label = Instance.new("TextLabel", parent)
+    Label.Size = UDim2.new(0, 98, 0, 50)
+    Label.Position = UDim2.new(0, 10, 0, yPosition)
+    Label.Font = Enum.Font.FredokaOne
+    Label.Text = labelText
+    Label.TextColor3 = Color3.fromRGB(255, 255, 255)
+    Label.TextSize = 28
+    Label.BackgroundTransparency = 1
+
+    local Toggle = Instance.new("Frame", parent)
+    Toggle.Size = UDim2.new(0, 70, 0, 34)
+    Toggle.Position = UDim2.new(0.55, 0, 0, yPosition + 6)
+    Toggle.BackgroundColor3 = Color3.fromRGB(50, 50, 50)
+    Instance.new("UICorner", Toggle).CornerRadius = UDim.new(0, 17)
+
+    local Knob = Instance.new("Frame", Toggle)
+    Knob.Size = UDim2.new(0, 26, 0, 26)
+    Knob.Position = defaultState and UDim2.new(1, -30, 0, 4) or UDim2.new(0, 4, 0, 4)
+    Knob.BackgroundColor3 = defaultState and Color3.fromRGB(255, 0, 0) or Color3.fromRGB(35, 35, 35)
+    Instance.new("UICorner", Knob).CornerRadius = UDim.new(1, 0)
+
+    local function toggleAction()
+        settings[settingName] = not settings[settingName]
+        saveSettings()
+        local on = settings[settingName]
+        TweenService:Create(Knob, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+            Position = on and UDim2.new(1, -30, 0, 4) or UDim2.new(0, 4, 0, 4),
+            BackgroundColor3 = on and Color3.fromRGB(255, 0, 0) or Color3.fromRGB(35, 35, 35)
+        }):Play()
+    end
+
+    Toggle.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then toggleAction() end
+    end)
+
+    Knob.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then toggleAction() end
+    end)
+end
+
+createToggle(SettingsGUI, "Ping:", settings.Ping, 10, "Ping")
+createToggle(SettingsGUI, "Scripts:", settings.Scripts, 80, "Scripts")
+
+local settingsOpen = false
+SettingsOpenButton.MouseButton1Click:Connect(function()
+    settingsOpen = not settingsOpen
+    if settingsOpen then
+        TweenService:Create(SettingsGUI, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Position = UDim2.new(1.03, 0, 0, 0)}):Play()
+        TweenService:Create(SettingsOpenButton, TweenInfo.new(0.3), {ImageTransparency = 1}):Play()
+    else
+        TweenService:Create(SettingsGUI, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Position = UDim2.new(12.0, 0, 0, 0)}):Play()
+        TweenService:Create(SettingsOpenButton, TweenInfo.new(0.3), {ImageTransparency = 0}):Play()
+    end
+end)
+
+local function createESP(part, displayName)
+    if not part or espDrawings[part] then return end
+    local highlight = Instance.new("Highlight")
+    highlight.Adornee = part
+    highlight.FillColor = Color3.fromRGB(0, 0, 255)
+    highlight.FillTransparency = 0.6
+    highlight.OutlineColor = Color3.fromRGB(0, 0, 255)
+    highlight.OutlineTransparency = 0.2
+    highlight.Parent = part
+
+    local billboard = Instance.new("BillboardGui")
+    billboard.Adornee = part
+    billboard.Size = UDim2.new(0, 200, 0, 50)
+    billboard.StudsOffset = Vector3.new(0, 2, 0)
+    billboard.AlwaysOnTop = true
+
+    local nameLabel = Instance.new("TextLabel", billboard)
+    nameLabel.Size = UDim2.new(1, 0, 1, 0)
+    nameLabel.BackgroundTransparency = 1
+    nameLabel.Font = Enum.Font.FredokaOne
+    nameLabel.Text = displayName
+    nameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    nameLabel.TextSize = 14
+    billboard.Parent = part
+
+    espDrawings[part] = {highlight = highlight, billboard = billboard}
+end
+
+local pingSound = Instance.new("Sound")
+pingSound.SoundId = (_G.PingSoundId or "rbxassetid://17208361335")
+pingSound.Volume = 1
+pingSound.Parent = workspace
+
+local PingEnabled = settings.Ping
+local LoadSuperSpeed = settings.Scripts
+
+local function updateUI()
+    Logger:ClearAllChildren()
+    local y = 0
+    for name, count in pairs(foundBrainrots) do
+        local label = Instance.new("TextLabel", Logger)
+        label.Size = UDim2.new(1, -10, 0, 30)
+        label.Position = UDim2.new(0, 0, 0, y)
+        label.Font = Enum.Font.FredokaOne
+        label.Text = name .. " x" .. count
+        label.TextColor3 = Color3.fromRGB(255, 255, 255)
+        label.TextSize = 14
+        label.BackgroundTransparency = 1
+        y += 35
+    end
+    FoundAmount.Text = "Found: " .. tostring((function()
+        local total = 0
+        for _, c in pairs(foundBrainrots) do total += c end
+        return total
+    end)())
+end
+
+local function scan()
+    foundBrainrots = {}
+    countedObjects = {}
+    local hasFound = false
+    for _, esp in pairs(espDrawings) do
+        pcall(function()
+            esp.highlight:Destroy()
+            esp.billboard:Destroy()
+        end)
+    end
+    espDrawings = {}
+    for _, obj in ipairs(Workspace:GetDescendants()) do
+        if obj:IsA("Model") or obj:IsA("Folder") then
+            if not obj:IsDescendantOf(LocalPlayer.Character) then
+                local match = matchesBrainrot(obj.Name)
+                if match and not countedObjects[obj] then
+                    countedObjects[obj] = true
+                    foundBrainrots[match] = (foundBrainrots[match] or 0) + 1
+                    hasFound = true
+                    if PingEnabled then pingSound:Play() end
+                    local part = obj:FindFirstChild("Head") or obj:FindFirstChildWhichIsA("BasePart")
+                    if part then createESP(part, obj.Name) end
+                end
+            end
+        end
+    end
+    updateUI()
+    if hasFound and LoadSuperSpeed and not superSpeedAndFlyLoaded then
+        superSpeedAndFlyLoaded = true
+        pcall(function()
+            loadstring(game:HttpGet("https://raw.githubusercontent.com/GlyphsCaveOfTeasure/speedandflyig/refs/heads/main/e"))()
+        end)
+    end
+    return hasFound
+end
+
+local function tryServers()
+    local req = (syn and syn.request) or request or http_request
+    if not req then warn("No HTTP support.") return end
+
+    local function fetchServers(cursor)
+        local url = "https://games.roblox.com/v1/games/" .. PlaceId .. "/servers/Public?sortOrder=Asc&limit=100"
+        if cursor then url = url .. "&cursor=" .. cursor end
+        local success, result = pcall(function()
+            return HttpService:JSONDecode(req({Url = url, Method = "GET"}).Body)
+        end)
+        return (success and result) or nil
+    end
+
+    local function hopLoop()
+        local cursor = nil
+        repeat
+            local result = fetchServers(cursor)
+            if not result then break end
+            for _, server in ipairs(result.data or {}) do
+                if not running then return end
+                if server.id ~= game.JobId and server.playing < server.maxPlayers and not triedServers[server.id] then
+                    triedServers[server.id] = true
+                    serversTried += 1
+                    scanningLabel.Text = "🔁 Hopping... (" .. serversTried .. ")"
+                    coroutine.wrap(function()
+                        local ok = pcall(function()
+                            TeleportService:TeleportToPlaceInstance(PlaceId, server.id, LocalPlayer)
+                        end)
+                        if not ok then warn("Failed to teleport to: " .. server.id) end
+                    end)()
+                    task.wait(0.3)
+                end
+            end
+            cursor = result.nextPageCursor
+        until not cursor
+    end
+
+    hopLoop()
+end
+
+task.spawn(function()
+    while true do
+        if running then
+            local hasFound = scan()
+            if not hasFound then
+                scanningLabel.Text = "🔎 Scanned: No brainrots found, hopping servers..."
+                tryServers()
+            else
+                scanningLabel.Text = "✅ Found!"
+            end
+        end
+        task.wait(3)
+    end
+end)
