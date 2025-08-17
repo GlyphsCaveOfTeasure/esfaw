@@ -3,12 +3,15 @@ local Workspace = game:GetService("Workspace")
 local TweenService = game:GetService("TweenService")
 local HttpService = game:GetService("HttpService")
 local TeleportService = game:GetService("TeleportService")
+local RunService = game:GetService("RunService")
+
 local LocalPlayer = Players.LocalPlayer
 local PlaceId = game.PlaceId
 
 local settingsFile = "brainrot_settings.json"
-local settings = { Ping = true, ESP = false }
+local settings = { Ping = true, ESP = true } -- ESP auto-on
 
+-- Load/save settings
 local function loadSettings()
     if isfile(settingsFile) then
         local success, result = pcall(HttpService.JSONDecode, HttpService, readfile(settingsFile))
@@ -24,18 +27,11 @@ end
 
 loadSettings()
 
-local running = true
-local foundBrainrots, countedObjects, espDrawings = {}, {}, {}
-local triedServers, serversTried = {}, 0
-local brainrotNames = _G.TargetBrainrots or {}
-
-local function matchesBrainrot(name)
-    for _, br in ipairs(brainrotNames) do if name == br then return br end end
-    return nil
-end
-
-local ScreenGui = Instance.new("ScreenGui", LocalPlayer:WaitForChild("PlayerGui"))
+-- GUI
+local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.ResetOnSpawn = false
+ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
+
 local frame = Instance.new("Frame", ScreenGui)
 frame.Size = UDim2.new(0, 403, 0, 415)
 frame.Position = UDim2.new(0.429, 0, 0.276, 0)
@@ -72,6 +68,7 @@ FoundAmount.TextSize = 30
 FoundAmount.BackgroundTransparency = 1
 FoundAmount.Text = "Found: 0"
 
+-- Settings GUI
 local SettingsOpenButton = Instance.new("ImageButton", frame)
 SettingsOpenButton.Size = UDim2.new(0, 50, 0, 50)
 SettingsOpenButton.Position = UDim2.new(1.038, 0, 0, 0)
@@ -115,44 +112,50 @@ local function createToggle(parent, labelText, defaultState, yPosition, settingN
             Position = on and UDim2.new(1, -30, 0, 4) or UDim2.new(0, 4, 0, 4),
             BackgroundColor3 = on and Color3.fromRGB(255, 0, 0) or Color3.fromRGB(35, 35, 35)
         }):Play()
+
+        if settingName == "ESP" then
+            if on then
+                loadESP()
+            else
+                unloadESP()
+            end
+        end
     end
 
-    Toggle.InputBegan:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 then toggleAction() end end)
-    Knob.InputBegan:Connect(function(input) if input.UserInputType == Enum.UserInputType.MouseButton1 then toggleAction() end end)
+    Toggle.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then toggleAction() end
+    end)
+    Knob.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then toggleAction() end
+    end)
 end
 
 createToggle(SettingsGUI, "Ping:", settings.Ping, 10, "Ping")
 createToggle(SettingsGUI, "ESP:", settings.ESP, 80, "ESP")
 
+-- Settings button
 local settingsOpen = false
 SettingsOpenButton.MouseButton1Click:Connect(function()
     settingsOpen = not settingsOpen
     if settingsOpen then
         TweenService:Create(SettingsGUI, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Position = UDim2.new(1.03, 0, 0, 0)}):Play()
-        TweenService:Create(SettingsOpenButton, TweenInfo.new(0.3), {ImageTransparency = 1}):Play()
     else
         TweenService:Create(SettingsGUI, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {Position = UDim2.new(12.0, 0, 0, 0)}):Play()
-        TweenService:Create(SettingsOpenButton, TweenInfo.new(0.3), {ImageTransparency = 0}):Play()
     end
 end)
 
-local pingSound = Instance.new("Sound")
-pingSound.SoundId = (_G.PingSoundId or "rbxassetid://17208361335")
-pingSound.Volume = 1
-pingSound.Parent = workspace
-
-local PingEnabled = settings.Ping
-local ESPEnabled = settings.ESP
-
-local RunService = game:GetService("RunService")
+-- ====================
+-- PLAYER ESP
+-- ====================
+local CharacterESP = {}
 local Camera = Workspace.CurrentCamera
 local MAX_DISTANCE = 250
-local CharacterESP = {}
 
 local function isAlive(character)
     local humanoid = character:FindFirstChildOfClass("Humanoid")
     return humanoid and humanoid.Health > 0
 end
+
 local function getHead(character) return character:FindFirstChild("Head") end
 local function distanceFromCamera(cf) return (Camera.CFrame.Position - cf.Position).Magnitude end
 local function sameTeam(p1, p2) return p1.Team and p2.Team and p1.Team == p2.Team end
@@ -208,8 +211,11 @@ local function attachESP(character, owner)
     local billboard = makeNameBillboard(head, owner.DisplayName ~= "" and owner.DisplayName or owner.Name)
     local conn
     conn = RunService.RenderStepped:Connect(function()
-        if not ESPEnabled then highlight.Enabled = false billboard.Enabled = false return end
-        if not character.Parent or not isAlive(character) then highlight.Enabled = false billboard.Enabled = false return end
+        if not character.Parent or not isAlive(character) then
+            highlight.Enabled = false
+            billboard.Enabled = false
+            return
+        end
         local d = distanceFromCamera(head.CFrame)
         local within = d <= MAX_DISTANCE
         highlight.Enabled = within
@@ -219,120 +225,101 @@ local function attachESP(character, owner)
     CharacterESP[character] = {highlight = highlight, billboard = billboard, conn = conn}
 end
 
-local function setupPlayer(p)
-    if p == LocalPlayer then return end
-    local function onCharAdded(char) attachESP(char, p) end
-    if p.Character then onCharAdded(p.Character) end
-    p.CharacterAdded:Connect(onCharAdded)
-end
-
-for _, p in ipairs(Players:GetPlayers()) do setupPlayer(p) end
-Players.PlayerAdded:Connect(setupPlayer)
-Players.PlayerRemoving:Connect(function(p) if p.Character then cleanupCharacterESP(p.Character) end end)
-
-local function updateUI()
-    Logger:ClearAllChildren()
-    local y = 0
-    for name, count in pairs(foundBrainrots) do
-        local label = Instance.new("TextLabel", Logger)
-        label.Size = UDim2.new(1, -10, 0, 30)
-        label.Position = UDim2.new(0, 0, 0, y)
-        label.Font = Enum.Font.FredokaOne
-        label.Text = name .. " x" .. count
-        label.TextColor3 = Color3.fromRGB(255, 255, 255)
-        label.TextSize = 14
-        label.BackgroundTransparency = 1
-        y += 35
+local function loadESP()
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer then
+            if p.Character then attachESP(p.Character, p) end
+            p.CharacterAdded:Connect(function(char) attachESP(char, p) end)
+        end
     end
-    FoundAmount.Text = "Found: " .. tostring((function() local total = 0 for _, c in pairs(foundBrainrots) do total += c end return total end)())
+    Players.PlayerRemoving:Connect(function(p)
+        if p.Character then cleanupCharacterESP(p.Character) end
+    end)
 end
 
-local function scan()
-    foundBrainrots = {}
-    countedObjects = {}
-    local hasFound = false
-    for _, esp in pairs(espDrawings) do pcall(function() esp.highlight:Destroy() esp.billboard:Destroy() end) end
-    espDrawings = {}
+local function unloadESP()
+    for char in pairs(CharacterESP) do
+        cleanupCharacterESP(char)
+    end
+end
+
+-- Auto-enable ESP
+loadESP()
+
+-- ====================
+-- SCAN & SERVER HOP
+-- ====================
+local brainrotNames = _G.TargetBrainrots or {}
+local foundObjects = {}
+local triedServers = {}
+local serversTried = 0
+
+local function matchesBrainrot(name)
+    for _, br in ipairs(brainrotNames) do
+        if name == br then return br end
+    end
+    return nil
+end
+
+local function scanForBrainrots()
     for _, obj in ipairs(Workspace:GetDescendants()) do
-        if obj:IsA("Model") or obj:IsA("Folder") then
-            if not obj:IsDescendantOf(LocalPlayer.Character) then
-                local match = matchesBrainrot(obj.Name)
-                if match and not countedObjects[obj] then
-                    countedObjects[obj] = true
-                    foundBrainrots[match] = (foundBrainrots[match] or 0) + 1
-                    hasFound = true
-                    if PingEnabled then pingSound:Play() end
-                    local part = obj:FindFirstChild("Head") or obj:FindFirstChildWhichIsA("BasePart")
-                    if part then
-                        local highlight = Instance.new("Highlight")
-                        highlight.Adornee = part
-                        highlight.FillColor = Color3.fromRGB(0, 0, 255)
-                        highlight.FillTransparency = 0.6
-                        highlight.OutlineColor = Color3.fromRGB(0, 0, 255)
-                        highlight.OutlineTransparency = 0.2
-                        highlight.Parent = part
-                        local billboard = Instance.new("BillboardGui")
-                        billboard.Adornee = part
-                        billboard.Size = UDim2.new(0, 200, 0, 50)
-                        billboard.StudsOffset = Vector3.new(0, 2, 0)
-                        billboard.AlwaysOnTop = true
-                        local nameLabel = Instance.new("TextLabel", billboard)
-                        nameLabel.Size = UDim2.new(1, 0, 1, 0)
-                        nameLabel.BackgroundTransparency = 1
-                        nameLabel.Font = Enum.Font.FredokaOne
-                        nameLabel.Text = obj.Name
-                        nameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-                        nameLabel.TextSize = 14
-                        billboard.Parent = part
-                        espDrawings[part] = {highlight = highlight, billboard = billboard}
-                    end
-                end
-            end
+        if obj:IsA("BasePart") and matchesBrainrot(obj.Name) and not foundObjects[obj] then
+            foundObjects[obj] = true
+            local label = Instance.new("TextLabel", Logger)
+            label.Size = UDim2.new(0, 200, 0, 30)
+            label.BackgroundTransparency = 1
+            label.TextColor3 = Color3.fromRGB(255, 255, 255)
+            label.Font = Enum.Font.FredokaOne
+            label.TextSize = 18
+            label.Text = "Found: " .. obj.Name
+            FoundAmount.Text = "Found: " .. tostring(#foundObjects)
         end
     end
-    updateUI()
-    return hasFound
 end
 
-local function tryServers()
-    local req = (syn and syn.request) or request or http_request
-    if not req then return end
-    local function fetchServers(cursor)
-        local url = "https://games.roblox.com/v1/games/" .. PlaceId .. "/servers/Public?sortOrder=Asc&limit=100"
-        if cursor then url = url .. "&cursor=" .. cursor end
-        local success, result = pcall(function() return HttpService:JSONDecode(req({Url = url, Method = "GET"}).Body) end)
-        return (success and result) or nil
-    end
-    local function hopLoop()
-        local cursor = nil
-        repeat
-            local result = fetchServers(cursor)
-            if not result then break end
-            for _, server in ipairs(result.data or {}) do
-                if not running then return end
-                if server.id ~= game.JobId and server.playing < server.maxPlayers and not triedServers[server.id] then
-                    triedServers[server.id] = true
-                    serversTried += 1
-                    scanningLabel.Text = "🔁 Hopping... (" .. serversTried .. ")"
-                    coroutine.wrap(function()
-                        local ok = pcall(function() TeleportService:TeleportToPlaceInstance(PlaceId, server.id, LocalPlayer) end)
-                        if not ok then warn("Failed to teleport to: " .. server.id) end
-                    end)()
-                    task.wait(0.3)
+local function getServerList()
+    local servers = {}
+    local page = 0
+    local morePages = true
+    while morePages do
+        local url = string.format("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100&cursor=%s", PlaceId, page)
+        local success, res = pcall(function()
+            return HttpService:JSONDecode(game:HttpGet(url))
+        end)
+        if success and res and res.data then
+            for _, s in ipairs(res.data) do
+                if s.id ~= game.JobId and not triedServers[s.id] then
+                    table.insert(servers, s.id)
                 end
             end
-            cursor = result.nextPageCursor
-        until not cursor
+            if res.nextPageCursor then
+                page = res.nextPageCursor
+            else
+                morePages = false
+            end
+        else
+            morePages = false
+        end
     end
-    hopLoop()
+    return servers
 end
 
-task.spawn(function()
+local function serverHop()
+    local servers = getServerList()
+    if #servers > 0 then
+        local id = servers[math.random(1, #servers)]
+        triedServers[id] = true
+        serversTried += 1
+        TeleportService:TeleportToPlaceInstance(PlaceId, id, LocalPlayer)
+    end
+end
+
+-- Auto-scan loop
+spawn(function()
     while true do
-        if running then
-            local hasFound = scan()
-            if not hasFound then scanningLabel.Text = "🔎 Scanned: No brainrots found, hopping servers..." tryServers() else scanningLabel.Text = "✅ Found!" end
-        end
-        task.wait(3)
+        scanningLabel.Text = "Scanning..."
+        scanForBrainrots()
+        wait(5)
+        scanningLabel.Text = "Idle..."
     end
 end)
